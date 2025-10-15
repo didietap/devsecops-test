@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apm-server
+  namespace: devsecops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: apm-server
+  template:
+    metadata:
+      labels:
+        app: apm-server
+    spec:
+      containers:
+        - name: apm-server
+          image: docker.elastic.co/apm/apm-server:8.12.0
+          args: ["apm-server", "-e"]
+          env:
+            - name: ELASTICSEARCH_HOSTS
+              value: "http://elasticsearch.devsecops.svc.cluster.local:9200"
+          ports:
+            - containerPort: 8200
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-server
+  namespace: devsecops
+spec:
+  selector:
+    app: apm-server
+  ports:
+    - name: http
+      port: 8200
+      targetPort: 8200

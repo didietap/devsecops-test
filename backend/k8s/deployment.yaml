@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: devsecops
+  labels:
+    app: backend-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      volumes:
+        - name: infisical-secrets
+          emptyDir: {}
+        - name: infisical-identity
+          secret:
+            secretName: infisical-machine-identity
+        - name: infisical-scripts
+          configMap:
+            name: infisical-fetch-scripts
+            defaultMode: 0755
+      initContainers:
+        - name: fetch-infisical-secrets
+          image: curlimages/curl:8.4.0
+          imagePullPolicy: IfNotPresent
+          command: [ "sh", "-c", "/scripts/fetch-secrets.sh" ]
+          volumeMounts:
+            - name: infisical-secrets
+              mountPath: /secrets
+            - name: infisical-identity
+              mountPath: /secrets/.machine.infisical.json
+              # mounting secret as a file: the key name equals filename
+              # (kubectl create secret generic --from-file=.machine.infisical.json)
+              readOnly: true
+            - name: infisical-scripts
+              mountPath: /scripts
+      containers:
+        - name: backend-api
+          image: localhost:32000/backend-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          # override start command to use the start.sh wrapper from ConfigMap
+          command: ["sh", "-c", "/scripts/start.sh"]
+          volumeMounts:
+            - name: infisical-secrets
+              mountPath: /secrets
+              readOnly: true
+            - name: infisical-scripts
+              mountPath: /scripts
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: production
+            # Keep APM URL pointing to apm-server service (or use host via ingress)
+            - name: ELASTIC_APM_SERVER_URL
+              value: "http://apm.devsecops.svc.cluster.local:8200"
+            - name: ELASTIC_APM_SERVICE_NAME
+              value: "devsecops-backend"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api
+  namespace: devsecops
+spec:
+  selector:
+    app: backend-api
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
